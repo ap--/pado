@@ -6,6 +6,7 @@ import os.path as op
 import token
 import warnings
 from ast import literal_eval
+from operator import attrgetter
 from operator import itemgetter
 from pathlib import PurePath
 from tokenize import generate_tokens
@@ -123,27 +124,34 @@ def register_filename_mapper(site, mapper):
     ImageId.site_mapper[site] = mapper()
 
 
-class ImageId(Tuple[Optional[str], ...]):
+class ImageId:
     """Unique identifier for images in pado datasets"""
+
+    __slots__ = (
+        "_site",
+        "_parts",
+    )
 
     # string matching rather than regex for speedup `ImageId('1', '2')`
     _prefix, _suffix = f"{__qualname__}(", ")"  # type: ignore
 
-    def __new__(cls, *parts: str, site: Optional[str] = None):
+    def __init__(self, *parts: str, site: Optional[str] = None):
         """Create a new ImageId instance"""
         try:
             part, *more_parts = parts
         except ValueError:
-            raise ValueError(f"can not create an empty {cls.__name__}()")
+            raise ValueError(f"can not create an empty {type(self).__name__}()")
 
         if isinstance(part, ImageId):
             # noinspection PyPropertyAccess
-            return super().__new__(cls, [part.site, *part.parts])
+            self._site = part.site
+            self._parts = list(part.parts)
+            return
 
         if any(not isinstance(x, str) for x in parts):
             if not more_parts and isinstance(part, Iterable):
                 raise ValueError(
-                    f"all parts must be of type str. Did you mean `{cls.__name__}.make({part!r})`?"
+                    f"all parts must be of type str. Did you mean `{type(self).__name__}.make({part!r})`?"
                 )
             else:
                 item_types = [type(x).__name__ for x in parts]
@@ -151,16 +159,17 @@ class ImageId(Tuple[Optional[str], ...]):
                     f"all parts must be of type str. Received: {item_types!r}"
                 )
 
-        if part.startswith(cls._prefix) and part.endswith(cls._suffix):
+        if part.startswith(self._prefix) and part.endswith(self._suffix):
             raise ValueError(
-                f"use {cls.__name__}.from_str() to convert a serialized object"
+                f"use {self.__class__.__name__}.from_str() to convert a serialized object"
             )
         elif part[0] == "{" and part[-1] == "}" and '"image_id":' in part:
             raise ValueError(
-                f"use {cls.__name__}.from_json() to convert a serialized json object"
+                f"use {self.__class__.__name__}.from_json() to convert a serialized json object"
             )
 
-        return super().__new__(cls, [site, *parts])  # type: ignore
+        self._site = site
+        self._parts = list(parts)
 
     @classmethod
     def make(cls, parts: Iterable[str], site: Optional[str] = None):
@@ -184,19 +193,32 @@ class ImageId(Tuple[Optional[str], ...]):
     def __getnewargs_ex__(self):
         return self[1:], {"site": self[0]}
 
+    # --- tuple ducktyping --------------------------------------------
+
+    def __iter__(self):
+        return iter([self._site, *self._parts])
+
+    def __getitem__(self, idx: slice[int] | int):
+        return tuple([self.site, *self.parts])[idx]
+
+    def __len__(self):
+        return len(self._parts) + 1
+
     # --- namedtuple style property access ----------------------------
 
     # note PyCharm doesn't recognize these: https://youtrack.jetbrains.com/issue/PY-47192
+
     site: Optional[str] = cast(
-        "str | None", property(itemgetter(0), doc="return site of the image id")
+        "str | None", property(attrgetter("_site"), doc="return site of the image id")
     )
     parts: Tuple[str, ...] = cast(
         "tuple[str, ...]",
-        property(itemgetter(slice(1, None)), doc="return the parts of the image id"),
+        property(attrgetter("_parts"), doc="return the parts of the image id"),
     )
-    last: str = cast(
-        str, property(itemgetter(-1), doc="return the last part of the image id")
-    )
+    @property
+    def last(self) -> str:
+        """return the last part of the image id"""
+        return self._parts[-1]
 
     # --- string serialization methods --------------------------------
 
@@ -278,7 +300,7 @@ class ImageId(Tuple[Optional[str], ...]):
              ids specify a site (which will be the default, but is
              not really while we are still refactoring...)
         """
-        return tuple.__hash__(self[-1:])  # (self.last,)
+        return hash(self[-1:])  # (self.last,)
 
     def __eq__(self, other):
         """carefully handle equality!
@@ -293,7 +315,7 @@ class ImageId(Tuple[Optional[str], ...]):
         if self[0] is None or other[0] is None:  # self.site
             return self[1:] == other[1:]
         else:
-            return tuple.__eq__(self, other)
+            return self.site == other.site and self.parts == other.parts
 
     def __ne__(self, other):
         """need to overwrite tuple.__ne__"""
