@@ -649,7 +649,7 @@ def clear_provider_getitem_cache(p: PadoMutableMapping) -> None:
         p.__getitem_cached__.cache_clear()
     elif hasattr(p, "providers"):
         for _p in p.providers:
-            clear_provider_getitem_cache(p)
+            clear_provider_getitem_cache(_p)
     elif hasattr(p, "_provider"):
         # noinspection PyProtectedMember
         clear_provider_getitem_cache(p._provider)
